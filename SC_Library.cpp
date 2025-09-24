@@ -219,7 +219,7 @@ void MainControlClass::beginAPAndWebServer(const char* ap_ssid, const char* ap_p
         Serial.println(ssid);
         Serial.print("password: ");
         Serial.println(password);
-      WiFi.softAPConfig(local_IP, gateway, subnet);
+     // WiFi.softAPConfig(local_IP, gateway, subnet);
 
         WiFi.mode(WIFI_AP);
         WiFi.softAP(ssid, password);
