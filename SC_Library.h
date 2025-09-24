@@ -50,9 +50,9 @@
 #define USER_TAGS_START_ADDR 64 // Start address for user tags
 #define Statistics_START_ADDR  (USER_TAGS_START_ADDR + (MAX_USER_TAGS * USER_TAG_LEN))
 
-IPAddress local_IP(192, 168, 4, 1);    // The desired static IP address
-IPAddress gateway(192, 168, 4, 1);     // The gateway (usually the same as the local_IP in AP mode)
-IPAddress subnet(255, 255, 255, 0);
+// IPAddress local_IP(192, 168, 4, 1);    // The desired static IP address
+// IPAddress gateway(192, 168, 4, 1);     // The gateway (usually the same as the local_IP in AP mode)
+// IPAddress subnet(255, 255, 255, 0);
 extern WebServer server; 
 
 // --- MainControlClass (Base Class) ---
