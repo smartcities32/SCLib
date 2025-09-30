@@ -15,6 +15,8 @@
 #elif ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPUpdateServer.h> // ✨ إضافة مكتبة تحديث OTA
+#include <ESP8266mDNS.h>             // ✨ إضافة مكتبة mDNS
 #define WebServer ESP8266WebServer 
 // Include for external EEPROM on ESP8266
 #include <Wire.h> // Already included, but good to keep in mind
@@ -90,6 +92,15 @@ public:
     
     // External EEPROM specific functions
 #ifdef USE_EXTERNAL_EEPROM
+   template <typename T>
+    void externalEEPROMPut(int address, const T& value) {
+        externalEEPROMWriteBytes(address, (const byte*)&value, sizeof(T));
+    } // **Definition included in header**
+
+    template <typename T>
+    void externalEEPROMGet(int address, T& value) {
+        externalEEPROMReadBytes(address, (byte*)&value, sizeof(T));
+    }
     uint8_t externalEEPROMReadByte(unsigned int address);
     void externalEEPROMWriteByte(unsigned int address, uint8_t data);
     void externalEEPROMReadBytes(unsigned int address, byte* buffer, int length);
@@ -98,10 +109,6 @@ public:
     void externalEEPROMWriteInt(unsigned int address, int value);
     String externalEEPROMReadString(uint16_t address, uint16_t length);
     void externalEEPROMWriteString(uint16_t address, String data);
-    template <typename T>
-    void externalEEPROMPut(int address, const T& value);
-    template <typename T>
-    void externalEEPROMGet(int address, T& value);
 #endif
     int MAX_USER_TAGS = 300;
 private: 
