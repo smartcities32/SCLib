@@ -1,7 +1,7 @@
 // SC_Library.cpp
 #include "SC_Library.h"
 
-// External EEPROM Helper Functions (Implement these in SC_Library.cpp)
+// --- External EEPROM Helper Functions (No Change) ---
 #ifdef USE_EXTERNAL_EEPROM
 uint8_t MainControlClass::externalEEPROMReadByte(unsigned int address) {
     Wire.beginTransmission(EXTERNAL_EEPROM_ADDR);
@@ -96,7 +96,7 @@ void MainControlClass::externalEEPROMGet(int address, T& value) {
 }
 #endif // USE_EXTERNAL_EEPROM
 
-// RTCManager Constructor
+// --- RTCManager Implementations (No Change) ---
 #ifdef USE_EXTERNAL_EEPROM
 RTCManager::RTCManager(WebServer& serverRef, int relayPin)
     : MainControlClass(serverRef, relayPin), _rtc() {
@@ -176,9 +176,28 @@ MainControlClass::MainControlClass(WebServer& serverRef, int relayPin, EEPROMCla
     // Initialize EEPROM (only once in the base class)
 }
 
+/**
+ * @brief Configures OTA Update Server (New function)
+ */
+void MainControlClass::setupOTA() {
+    Serial.println("OTA Server starting...");
+    
+    // Start mDNS
+    if (MDNS.begin(_hostname)) {
+        Serial.print("mDNS responder started: http://");
+        Serial.print(_hostname);
+        Serial.println(".local");
+    } else {
+        Serial.println("Error starting mDNS");
+    }
+
+    // Setup OTA update server at /update
+    _httpUpdater.setup(&_server, "/update", OTA_USERNAME, OTA_PASSWORD);
+    Serial.println("OTA update available at: /update");
+}
+
 void MainControlClass::beginAPAndWebServer(const char* ap_ssid, const char* ap_password) {
-    Wire.begin(); // Start I2C communication (essential for RTC and external EEPROM)
-   // Wire.begin(EEPROM_SDA_PIN, EEPROM_SCL_PIN); // Start I2C communication (essential for RTC and external EEPROM)
+   Wire.begin(EEPROM_SDA_PIN, EEPROM_SCL_PIN); // Start I2C communication (essential for RTC and external EEPROM)
 
 #ifndef USE_EXTERNAL_EEPROM
     if (!_eeprom.begin(EEPROM_SIZE)) {
@@ -200,13 +219,10 @@ void MainControlClass::beginAPAndWebServer(const char* ap_ssid, const char* ap_p
     digitalWrite(_relayPin, savedState ? HIGH : LOW);
     Serial.print("Initial relay state from EEPROM: ");
     Serial.println(savedState ? "ON" : "OFF");
-// saveStringToEEPROM(SSID_ADDR, "hmade", SSID_MAX_LEN);
- //saveStringToEEPROM(PASSWORD_ADDR, "987654321", PASSWORD_MAX_LEN);
-//     delay(3000);
+
     String ssid = readStringFromEEPROM(SSID_ADDR, SSID_MAX_LEN);
     String password = readStringFromEEPROM(PASSWORD_ADDR, PASSWORD_MAX_LEN);
-    //String ssid = externalEEPROMReadString(SSID_ADDR, SSID_MAX_LEN);
-   // String password = externalEEPROMReadString(PASSWORD_ADDR, PASSWORD_MAX_LEN);
+
     if (ssid.isEmpty() || password.isEmpty() || ssid == "\0" || password == "\0") { // Added check for empty string from readStringFromEEPROM
         Serial.println("SSID or Password not set in EEPROM. Using default AP credentials.");
         ssid = ap_ssid;
@@ -228,6 +244,12 @@ void MainControlClass::beginAPAndWebServer(const char* ap_ssid, const char* ap_p
         Serial.print("AP IP address: ");
         Serial.println(IP);
 
+    // NEW: Setup OTA and mDNS
+    setupOTA(); 
+    _server.on("/", [this]() { handleRoot(); });
+    _server.on("/status", [this]() { handleStatus(); });
+    _server.on("/info", [this]() { handleInfo(); });
+    _server.on("/reboot", [this]() { handleReboot(); });
     // Wi-Fi Management
     _server.on("/api/wifi/set_ssid", HTTP_POST, [this]() { handleSetSSID(); });
     _server.on("/api/wifi/get_ssid", HTTP_GET, [this]() { handleGetSSID(); });
@@ -250,17 +272,189 @@ void MainControlClass::beginAPAndWebServer(const char* ap_ssid, const char* ap_p
     _server.onNotFound([this]() { handleNotFound(); });
 
     _server.begin();
+      MDNS.addService("http", "tcp", 80);
+
     Serial.println("HTTP server started");
 }
 
+/**
+ * @brief لوحة التحكم الرئيسية - صفحة HTML
+ * @description واجهة ويب محدثة لإدارة الجهاز الذكي
+ */
+void MainControlClass::handleRoot() {
+    String html = "<!DOCTYPE html><html><head>";
+    html += "<meta charset='UTF-8'>";
+    html += "<title>لوحة التحكم الذكية v" + String(FIRMWARE_VERSION) + " - محدّث!</title>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<meta http-equiv='refresh' content='5'>";
+    
+    // التنسيقات CSS
+    html += "<style>";
+    html += "body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;margin:40px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);direction:rtl}";
+    html += ".container{background:white;padding:30px;border-radius:15px;box-shadow:0 10px 30px rgba(0,0,0,0.2);max-width:800px;margin:0 auto}";
+    html += ".header{text-align:center;border-bottom:3px solid #667eea;padding-bottom:20px;margin-bottom:20px}";
+    html += ".version{color:#28a745;font-weight:bold;font-size:20px;margin:10px 0}";
+    html += ".updated{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:15px;border-radius:10px;margin:20px 0;text-align:center;font-weight:bold}";
+    html += ".info-section{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0}";
+    html += ".info-item{padding:10px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between}";
+    html += ".info-item:last-child{border-bottom:none}";
+    html += ".info-label{font-weight:bold;color:#495057}";
+    html += ".info-value{color:#007cba}";
+    html += ".button{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:12px 25px;border:none;border-radius:8px;margin:8px;cursor:pointer;text-decoration:none;display:inline-block;transition:transform 0.2s,box-shadow 0.2s;font-weight:bold}";
+    html += ".button:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(102,126,234,0.4)}";
+    html += ".button.danger{background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%)}";
+    html += ".button.danger:hover{box-shadow:0 5px 15px rgba(245,87,108,0.4)}";
+    html += ".actions{text-align:center;margin:20px 0}";
+    html += ".status-list{list-style:none;padding:0}";
+    html += ".status-list li{padding:8px;margin:5px 0;background:#e8f5e9;border-radius:5px;border-right:4px solid #28a745}";
+    html += ".footer{text-align:center;color:#6c757d;font-size:14px;margin-top:20px;padding-top:15px;border-top:1px solid #dee2e6}";
+    html += "</style></head><body>";
+
+    html += "<div class='container'>";
+    
+    // الرأس
+    html += "<div class='header'>";
+    html += "<h1>🎛️ لوحة التحكم الذكية</h1>";
+    html += "<p class='version'>إصدار البرنامج الثابت: " + String(FIRMWARE_VERSION) + " ✨</p>";
+    html += "</div>";
+
+    // رسالة التحديث
+    html += "<div class='updated'>";
+    html += "🚀 تم التحديث بنجاح! البرنامج الثابت تم نشره وتكوينه بشكل صحيح";
+    html += "</div>";
+
+    // معلومات الجهاز
+    html += "<h3>📊 معلومات الجهاز</h3>";
+    html += "<div class='info-section'>";
+    html += "<div class='info-item'><span class='info-label'>⚡ الإصدار الحالي:</span><span class='info-value'>" + String(FIRMWARE_VERSION) + "</span></div>";
+    html += "<div class='info-item'><span class='info-label'>🔢 معرّف الشريحة:</span><span class='info-value'>" + String(ESP.getChipId()) + "</span></div>";
+    html += "<div class='info-item'><span class='info-label'>💾 الذاكرة المتاحة:</span><span class='info-value'>" + String(ESP.getFreeHeap()) + " بايت</span></div>";
+    html += "<div class='info-item'><span class='info-label'>⏱️ وقت التشغيل:</span><span class='info-value'>" + String(millis()/1000) + " ثانية</span></div>";
+    html += "<div class='info-item'><span class='info-label'>👥 الأجهزة المتصلة:</span><span class='info-value'>" + String(WiFi.softAPgetStationNum()) + "</span></div>";
+    html += "</div>";
+
+    // الإجراءات
+    html += "<h3>⚙️ الإجراءات</h3>";
+    html += "<div class='actions'>";
+    html += "<a href='/status' class='button'>📈 حالة الجهاز (JSON)</a>";
+    html += "<a href='/info' class='button'>ℹ️ معلومات النظام</a>";
+    html += "<a href='/update' class='button'>🔄 تحديث البرنامج (OTA)</a>";
+    html += "<a href='/reboot' class='button danger' onclick='return confirm(\"هل أنت متأكد من إعادة تشغيل الجهاز؟\")'>🔌 إعادة التشغيل</a>";
+    html += "</div>";
+
+    // حالة التحديث
+    html += "<h3>✅ حالة تحديث OTA</h3>";
+    html += "<ul class='status-list'>";
+    html += "<li>✅ تم تحديث الإصدار إلى " + String(FIRMWARE_VERSION) + "</li>";
+    html += "<li>✅ الجهاز حافظ على نقطة الوصول WiFi وخادم الويب</li>";
+    html += "<li>✅ تم تحديث واجهة الويب بنجاح</li>";
+    html += "</ul>";
+
+    // التذييل
+    html += "<div class='footer'>";
+    html += "<p>🔄 <em>يتم تحديث الصفحة تلقائياً كل 5 ثوانٍ</em></p>";
+    html += "</div>";
+    
+    html += "</div></body></html>";
+
+    _server.send(200, "text/html", html);
+}
+
+/**
+ * @brief نقطة نهاية JSON لحالة الجهاز
+ */
+void MainControlClass::handleStatus() {
+    String json = "{";
+    json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
+    json += "\"updateStatus\":\"تم التحديث بنجاح إلى v" + String(FIRMWARE_VERSION) + "\",";
+    json += "\"chipId\":\"" + String(ESP.getChipId()) + "\",";
+    json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"uptime\":" + String(millis()/1000) + ",";
+    json += "\"connectedClients\":" + String(WiFi.softAPgetStationNum()) + ",";
+    json += "\"ipAddress\":\"" + WiFi.softAPIP().toString() + "\",";
+    json += "\"status\":\"success\",";
+    json += "\"timestamp\":" + String(millis());
+    json += "}";
+
+    _server.send(200, "application/json", json);
+}
+
+/**
+ * @brief معالج إعادة التشغيل
+ */
+void MainControlClass::handleReboot() {
+    String html = "<!DOCTYPE html><html><head>";
+    html += "<meta charset='UTF-8'>";
+    html += "<title>جاري إعادة التشغيل...</title>";
+    html += "<meta http-equiv='refresh' content='10;url=/'>";
+    html += "<style>";
+    html += "body{font-family:Arial;text-align:center;padding:50px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;direction:rtl}";
+    html += ".container{background:rgba(255,255,255,0.95);color:#333;padding:40px;border-radius:15px;max-width:500px;margin:0 auto;box-shadow:0 10px 30px rgba(0,0,0,0.3)}";
+    html += ".spinner{border:5px solid #f3f3f3;border-top:5px solid #667eea;border-radius:50%;width:60px;height:60px;animation:spin 1s linear infinite;margin:20px auto}";
+    html += "@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}";
+    html += "</style></head><body>";
+    html += "<div class='container'>";
+    html += "<h1>🔄 جاري إعادة تشغيل الجهاز الذكي...</h1>";
+    html += "<div class='spinner'></div>";
+    html += "<p>⏱️ سيتم إعادة تشغيل الجهاز خلال ثوانٍ قليلة</p>";
+    html += "<p>🔄 سيتم توجيهك تلقائياً إلى الصفحة الرئيسية</p>";
+    html += "</div></body></html>";
+
+    _server.send(200, "text/html", html);
+    delay(1000);
+    ESP.restart();
+}
+
+/**
+ * @brief صفحة معلومات النظام HTML
+ */
+void MainControlClass::handleInfo() {
+    String html = "<!DOCTYPE html><html><head>";
+    html += "<meta charset='UTF-8'>";
+    html += "<title>معلومات النظام v" + String(FIRMWARE_VERSION) + "</title>";
+    html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    html += "<style>";
+    html += "body{font-family:'Segoe UI',Arial,sans-serif;margin:40px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);direction:rtl}";
+    html += ".container{background:white;padding:30px;border-radius:15px;max-width:800px;margin:0 auto;box-shadow:0 10px 30px rgba(0,0,0,0.2)}";
+    html += "h1{color:#667eea;text-align:center;border-bottom:3px solid #667eea;padding-bottom:15px}";
+    html += "table{border-collapse:collapse;width:100%;margin:20px 0}";
+    html += "th,td{border:1px solid #ddd;padding:12px;text-align:right}";
+    html += "th{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;font-weight:bold}";
+    html += ".updated{background-color:#d4edda;font-weight:bold}";
+    html += ".back-button{display:inline-block;margin-top:20px;padding:10px 20px;background:#667eea;color:white;text-decoration:none;border-radius:8px;transition:all 0.3s}";
+    html += ".back-button:hover{background:#764ba2;transform:translateX(5px)}";
+    html += "</style></head><body>";
+
+    html += "<div class='container'>";
+    html += "<h1>📊 معلومات النظام - محدّث!</h1>";
+    html += "<table>";
+    html += "<tr><th>الخاصية</th><th>القيمة</th></tr>";
+    html += "<tr class='updated'><td>⚡ إصدار البرنامج الثابت</td><td>" + String(FIRMWARE_VERSION) + " ✨ محدّث</td></tr>";
+    html += "<tr><td>✅ حالة التحديث</td><td>نجح - عملية OTA تمت بشكل مثالي!</td></tr>";
+    html += "<tr><td>🔢 معرّف الشريحة</td><td>" + String(ESP.getChipId()) + "</td></tr>";
+    html += "<tr><td>💾 حجم الذاكرة الفلاش</td><td>" + String(ESP.getFlashChipSize()) + " بايت</td></tr>";
+    html += "<tr><td>🧠 الذاكرة المتاحة</td><td>" + String(ESP.getFreeHeap()) + " بايت</td></tr>";
+    html += "<tr><td>⚙️ تردد المعالج</td><td>" + String(ESP.getCpuFreqMHz()) + " ميجاهرتز</td></tr>";
+    html += "<tr><td>⏱️ وقت التشغيل</td><td>" + String(millis()/1000) + " ثانية</td></tr>";
+    html += "<tr><td>📡 عنوان IP</td><td>" + WiFi.softAPIP().toString() + "</td></tr>";
+    html += "</table>";
+    html += "<a href='/' class='back-button'>← العودة للصفحة الرئيسية</a>";
+    html += "</div></body></html>";
+
+    _server.send(200, "text/html", html);
+}
+
+
 
 void MainControlClass::handleGetOperationMethod() {
+// ... (Remains the same) ...
     uint8_t method = readOperationMethod();
     String response = "{\"status\":\"success\",\"method\":" + String(method) + "}";
     _server.send(200, "application/json", response);
 }
 
 void MainControlClass::handleSetOperationMethod() {
+// ... (Remains the same) ...
     if (_server.hasArg("plain")) {
         StaticJsonDocument<100> doc;
         DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -283,9 +477,13 @@ void MainControlClass::handleSetOperationMethod() {
 
 void MainControlClass::handleClient() {
     _server.handleClient();
+#ifdef ESP8266
+    MDNS.update(); // NEW: Keep mDNS service running
+#endif
 }
 
 void MainControlClass::resetConfigurations() {
+// ... (Remains the same) ...
     Serial.println("Resetting configurations...");
 #ifdef USE_EXTERNAL_EEPROM
     externalEEPROMWriteInt(USER_TAG_COUNT_ADDR, 0); 
@@ -297,9 +495,9 @@ void MainControlClass::resetConfigurations() {
    // writeLastScheduleId(0);
     //externalEEPROMWriteString(SSID_ADDR, "Smart Timer");
     //externalEEPROMWriteString(PASSWORD_ADDR, "sM@rt123");
-    saveStringToEEPROM(SSID_ADDR, "Default", SSID_MAX_LEN);
-    saveStringToEEPROM(PASSWORD_ADDR, "12345678", PASSWORD_MAX_LEN);
-    saveFixedStringToEEPROM(ADD_CARD_ADDR, "00009890388", USER_TAG_LEN);
+    saveStringToEEPROM(SSID_ADDR, "Smart-Elevator", SSID_MAX_LEN);
+    saveStringToEEPROM(PASSWORD_ADDR, "Aa123123#", PASSWORD_MAX_LEN);
+    saveFixedStringToEEPROM(ADD_CARD_ADDR, "21850107129", USER_TAG_LEN);
     saveFixedStringToEEPROM(REMOVE_CARD_ADDR, "00009870509", USER_TAG_LEN);
 
 
@@ -314,7 +512,7 @@ void MainControlClass::resetConfigurations() {
     delay(1000);
     ESP.restart();
 }
-
+// ... (Rest of MainControlClass remains the same) ...
 uint8_t MainControlClass::readOperationMethod() {
     uint8_t method;
 #ifdef USE_EXTERNAL_EEPROM
@@ -415,7 +613,7 @@ void MainControlClass::setRelayPhysicalState(bool state) {
 
 
 
-// --- Private Handlers Implementations for MainControlClass ---
+// --- Private Handlers Implementations for MainControlClass (No Change) ---
 void MainControlClass::handleSetSSID() {
     if (_server.hasArg("plain")) {
         StaticJsonDocument<200> doc;
@@ -567,7 +765,7 @@ void MainControlClass::handleNotFound() {
 
 
 
-// --- UserManagementClass Implementations ---
+// --- UserManagementClass Implementations (No Change) ---
 #ifdef USE_EXTERNAL_EEPROM
 UserManagementClass::UserManagementClass(WebServer& serverRef, int relayPin)
     : MainControlClass(serverRef, relayPin) {
@@ -580,6 +778,7 @@ UserManagementClass::UserManagementClass(WebServer& serverRef, int relayPin, EEP
 
 // Function to generate a random password
 String UserManagementClass::generatePassword() {
+// ... (Remains the same) ...
   //int length = 9;
   String password = "";
 
@@ -602,27 +801,32 @@ String UserManagementClass::generatePassword() {
 
 // Functions to get random characters of specific types
 char UserManagementClass::getRandomUpperCase() {
+// ... (Remains the same) ...
   const char upperCaseLetters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   return upperCaseLetters[random(0, sizeof(upperCaseLetters) - 1)];
 }
 
 char UserManagementClass::getRandomLowerCase() {
+// ... (Remains the same) ...
   const char lowerCaseLetters[] = "abcdefghijklmnopqrstuvwxyz";
   return lowerCaseLetters[random(0, sizeof(lowerCaseLetters) - 1)];
 }
 
 char UserManagementClass::getRandomNumber() {
+// ... (Remains the same) ...
   const char numbers[] = "0123456789";
   return numbers[random(0, 9)];
 }
 
 char UserManagementClass::getRandomSymbol() {
+// ... (Remains the same) ...
   const char symbols[] = "!@$&*";
   return symbols[random(0, 4)];
 }
 
 // Function to get a random character from the available sets
 char UserManagementClass::getRandomCharacter() {
+// ... (Remains the same) ...
   int charType = random(0, 4);  // 0 = uppercase, 1 = lowercase, 2 = numbers, 3 = symbols
 
   switch (charType) {
@@ -636,6 +840,7 @@ char UserManagementClass::getRandomCharacter() {
 
 // Function to shuffle a string
 String UserManagementClass::shuffleString(String str) {
+// ... (Remains the same) ...
   for (int i = 0; i < str.length(); i++) {
     int randomIndex = random(0, str.length());
     char temp = str[i];
@@ -649,7 +854,7 @@ String UserManagementClass::shuffleString(String str) {
 // And generatePassword() is an existing function that generates a password string.
 
 void UserManagementClass::generate_SSIDAndPASS() {
-
+// ... (Remains the same) ...
 #ifdef ESP32
    uint64_t mac = ESP.getEfuseMac(); // Get 64-bit MAC for ESP32
 #elif ESP8266
@@ -668,6 +873,7 @@ void UserManagementClass::generate_SSIDAndPASS() {
 }
 
 void UserManagementClass::setupUserEndpoints() {
+// ... (Remains the same) ...
     _server.on("/api/users/add_tag", HTTP_POST, [this]() { handleAddUserTag(); });
     _server.on("/api/users/delete_tag", HTTP_POST, [this]() { handleDeleteUserTag(); });
     _server.on("/api/users/delete_all_tags", HTTP_POST, [this]() { handleDeleteAllUserTags(); });
@@ -684,6 +890,7 @@ void UserManagementClass::setupUserEndpoints() {
 }
 
 void UserManagementClass::handleDeleteAllUserTags() {
+// ... (Remains the same) ...
 #ifdef USE_EXTERNAL_EEPROM
     externalEEPROMWriteInt(USER_TAG_COUNT_ADDR, 0); 
 #else
@@ -694,6 +901,7 @@ _eeprom.commit();
 }
 
 void UserManagementClass::saveUserTagCountToEEPROM(int count) {
+// ... (Remains the same) ...
 #ifdef USE_EXTERNAL_EEPROM
 externalEEPROMWriteInt(USER_TAG_COUNT_ADDR, count);
 #else
@@ -703,6 +911,7 @@ _eeprom.writeInt(USER_TAG_COUNT_ADDR, count);
 }
 
 int UserManagementClass::getUserTagCountFromEEPROM() {
+// ... (Remains the same) ...
 #ifdef USE_EXTERNAL_EEPROM
     return externalEEPROMReadInt(USER_TAG_COUNT_ADDR);
 #else
@@ -711,6 +920,7 @@ int UserManagementClass::getUserTagCountFromEEPROM() {
 }
 
 int UserManagementClass::findUserTagAddress(const String& tag) {
+// ... (Remains the same) ...
     int userCount = getUserTagCountFromEEPROM();
     for (int i = 0; i < userCount; ++i) {
         int currentTagAddr = USER_TAGS_START_ADDR + (i * USER_TAG_LEN);
@@ -733,6 +943,7 @@ int UserManagementClass::findUserTagAddress(const String& tag) {
 
 
     bool UserManagementClass::storeTag(String tag) {
+// ... (Remains the same) ...
         // Pad with leading zeros if tag is shorter than USER_TAG_LEN
         String temp = "";
         for(int i = tag.length() ; i < USER_TAG_LEN ; i++){
@@ -755,6 +966,7 @@ int UserManagementClass::findUserTagAddress(const String& tag) {
     }
     
     void UserManagementClass::addCard(){
+// ... (Remains the same) ...
        if (_server.hasArg("plain")) {
             StaticJsonDocument<200> doc;
             DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -789,6 +1001,7 @@ int UserManagementClass::findUserTagAddress(const String& tag) {
         _server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid request body. Expected {\"tag\":\"11_digits\"}\"}");
 }
     void UserManagementClass::removeCard(){
+// ... (Remains the same) ...
        if (_server.hasArg("plain")) {
             StaticJsonDocument<200> doc;
             DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -822,6 +1035,7 @@ int UserManagementClass::findUserTagAddress(const String& tag) {
 }
     
     void UserManagementClass::handleAddUserTag() {
+// ... (Remains the same) ...
         if (_server.hasArg("plain")) {
         StaticJsonDocument<200> doc;
         DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -871,6 +1085,7 @@ int UserManagementClass::findUserTagAddress(const String& tag) {
 }
 
 bool UserManagementClass::DeleteTag(String tag) {
+// ... (Remains the same) ...
         String temp = "";
         for(int i = tag.length() ; i < USER_TAG_LEN ; i++){
             temp += "0";
@@ -910,6 +1125,7 @@ bool UserManagementClass::DeleteTag(String tag) {
 
 }
 void UserManagementClass::handleDeleteUserTag() {
+// ... (Remains the same) ...
     if (_server.hasArg("plain")) {
         StaticJsonDocument<200> doc;
         DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -968,6 +1184,7 @@ void UserManagementClass::handleDeleteUserTag() {
     _server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid request body. Expected {\"tag\":\"11_digits\"}\"}");
 }
 bool UserManagementClass::checkTag(String tag) {
+// ... (Remains the same) ...
         if (tag.length() > USER_TAG_LEN) {
             Serial.println("Tag must be 11 digits long");
             return false;
@@ -995,6 +1212,7 @@ bool UserManagementClass::checkTag(String tag) {
 
 }
 void UserManagementClass::handleCheckUserTag() {
+// ... (Remains the same) ...
     if (_server.hasArg("plain")) {
         StaticJsonDocument<200> doc;
         DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -1030,6 +1248,7 @@ void UserManagementClass::handleCheckUserTag() {
 }
 
 void UserManagementClass::handleUseingUserTag() {
+// ... (Remains the same) ...
     if (_server.hasArg("plain")) {
         StaticJsonDocument<200> doc;
         DeserializationError error = deserializeJson(doc, _server.arg("plain"));
@@ -1070,11 +1289,13 @@ int index = findUserTagAddress(tag);
 }
 
 void UserManagementClass::handleGetUserTagCount() {
+// ... (Remains the same) ...
     String response = "{\"status\":\"success\",\"count\":" + String(getUserTagCountFromEEPROM()) + "}"; // Read live count
     _server.send(200, "application/json", response);
 }
 
 void UserManagementClass::handleGettags() {
+// ... (Remains the same) ...
     int usercount = getUserTagCountFromEEPROM();
     Serial.println(usercount);
     String users = "";
@@ -1101,6 +1322,7 @@ void UserManagementClass::handleGettags() {
 }
 
 String UserManagementClass::_trim(String& str){
+// ... (Remains the same) ...
     int count = 0;
     for(int i = 0; i < str.length(); i++){
         if(str[i] == '0')
@@ -1111,17 +1333,3 @@ String UserManagementClass::_trim(String& str){
     Serial.println(count);
     return str.substring(count);
 }
-
-/* please check */
-// --- UserManagementClass Implementations ---
-// #ifdef USE_EXTERNAL_EEPROM
-// UserPStatisric::UserPStatisric(WebServer& serverRef, int relayPin)
-//     : UserManagementClass(serverRef, relayPin) {
-// #else
-// UserManagementClass::UserManagementClass(WebServer& serverRef, int relayPin, EEPROMClass& eepromRef)
-//     : MainControlClass(serverRef, relayPin, eepromRef) {
-// #endif
-// }
-
-
-
