@@ -85,15 +85,7 @@ void MainControlClass::externalEEPROMWriteInt(unsigned int address, int value) {
     externalEEPROMWriteBytes(address, (const byte*)&value, sizeof(int));
 }
 
-template <typename T>
-void MainControlClass::externalEEPROMPut(int address, const T& value) {
-    externalEEPROMWriteBytes(address, (const byte*)&value, sizeof(T));
-}
 
-template <typename T>
-void MainControlClass::externalEEPROMGet(int address, T& value) {
-    externalEEPROMReadBytes(address, (byte*)&value, sizeof(T));
-}
 #endif // USE_EXTERNAL_EEPROM
 
 // --- RTCManager Implementations (No Change) ---
